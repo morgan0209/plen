@@ -129,6 +129,22 @@ def handle_hapus_kategori(data):
     emit('kategori_dihapus', {"id": kat_id}, broadcast=True)
 
 
+@socketio.on('edit_kategori_info')
+def handle_edit_kategori_info(data):
+    kat_id = data.get('id')
+    nama = (data.get('nama') or '').strip()[:60]
+    ikon = (data.get('ikon') or '📁').strip()[:8]
+    if not kat_id or not nama:
+        return
+
+    kategori = db.session.get(Kategori, kat_id)
+    if kategori:
+        kategori.nama = nama
+        kategori.ikon = ikon
+        db.session.commit()
+        emit('kategori_diedit', {"id": kat_id, "nama": nama, "ikon": ikon}, broadcast=True)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)

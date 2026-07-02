@@ -313,9 +313,59 @@
             opacity: 0.4;
         }
 
+        .btn-edit-kategori,
+        .btn-hapus-kategori {
+            flex: 0 0 auto;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            opacity: 0;
+            padding: 4px;
+            line-height: 1;
+            border-radius: 6px;
+            transition: opacity 0.15s, background 0.15s;
+        }
+
+        .kategori:hover .btn-edit-kategori,
+        .kategori:hover .btn-hapus-kategori,
+        .kategori:focus-within .btn-edit-kategori,
+        .kategori:focus-within .btn-hapus-kategori {
+            opacity: 0.4;
+        }
+
+        .btn-edit-kategori:hover,
         .btn-hapus-kategori:hover {
             opacity: 1 !important;
             background: var(--line-soft);
+        }
+
+        .aksi-kategori {
+            flex: 0 0 auto;
+            background: var(--surface);
+            border: 1.5px solid var(--line);
+            border-radius: var(--radius-md);
+            color: var(--ink);
+            padding: 11px 14px;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            white-space: nowrap;
+        }
+
+        .aksi-kategori:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            border-color: var(--line-soft);
+            color: var(--ink-faint);
+        }
+
+        .aksi-kategori:hover:not(:disabled) {
+            background: var(--brand);
+            border-color: var(--brand-dark);
+            color: #fff;
         }
 
         textarea {
@@ -571,6 +621,8 @@
             <option value="{{ kat.id }}">{{ kat.ikon }} {{ kat.nama }}</option>
             {% endfor %}
         </select>
+        <button id="btnUndo" class="aksi-kategori" disabled>↶ Undo</button>
+        <button id="btnRedo" class="aksi-kategori" disabled>↷ Redo</button>
         <button id="btnTambahKategori">+ Kategori</button>
     </div>
 
@@ -597,10 +649,13 @@
                     <span class="kategori-icon">{{ kat.ikon }}</span>
                     <h3>{{ kat.nama }}</h3>
                 </div>
+                <button class="btn-edit-kategori" onclick="bukaModalEditKategori('{{ kat.id }}')"
+                    title="Edit kategori">✏️</button>
                 <button class="btn-hapus-kategori" onclick="hapusKategori('{{ kat.id }}')"
                     title="Hapus kategori">🗑️</button>
             </div>
-            <textarea id="{{ kat.id }}" placeholder="Belum ada catatan..."
+            <textarea id="{{ kat.id }}" placeholder="Belum ada catatan..." onfocus="mulaiEditCatatan('{{ kat.id }}')"
+                onblur="selesaiEditCatatan('{{ kat.id }}')"
                 onkeyup="kirimUpdate('{{ kat.id }}')">{{ notes[kat.id] }}</textarea>
         </div>
         {% endfor %}
@@ -617,6 +672,21 @@
             <div class="modal-tombol">
                 <button class="btn-batal" id="btnBatalTambah">Batal</button>
                 <button class="btn-simpan" id="btnSimpanTambah">Tambah</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modalEditKategori">
+        <div class="modal-box">
+            <h2>Edit Kategori</h2>
+            <div class="modal-sub">Perbarui nama atau ikon kategori</div>
+            <label for="inputEditNamaKategori">Nama kategori</label>
+            <input type="text" id="inputEditNamaKategori" maxlength="60">
+            <label for="inputEditIkonKategori">Ikon (emoji, opsional)</label>
+            <input type="text" id="inputEditIkonKategori" maxlength="8">
+            <div class="modal-tombol">
+                <button class="btn-batal" id="btnBatalEdit">Batal</button>
+                <button class="btn-simpan" id="btnSimpanEdit">Simpan</button>
             </div>
         </div>
     </div>
@@ -667,6 +737,113 @@
             if (pencarianAktif()) jalankanPencarian();
         });
 
+        const undoStack = [];
+        const redoStack = [];
+        const editSession = {};
+
+        function updateUndoRedoButtons() {
+            document.getElementById('btnUndo').disabled = undoStack.length === 0;
+            document.getElementById('btnRedo').disabled = redoStack.length === 0;
+        }
+
+        function mulaiEditCatatan(id) {
+            const ta = document.getElementById(id);
+            if (!ta) return;
+            editSession[id] = { before: ta.value };
+        }
+
+        function selesaiEditCatatan(id) {
+            const ta = document.getElementById(id);
+            if (!ta || !editSession[id]) return;
+            const before = editSession[id].before;
+            const after = ta.value;
+            if (before !== after) {
+                undoStack.push({
+                    type: 'note',
+                    id,
+                    before,
+                    after,
+                });
+                redoStack.length = 0;
+                updateUndoRedoButtons();
+            }
+            delete editSession[id];
+        }
+
+        function undoAksi() {
+            if (undoStack.length === 0) return;
+            const aksi = undoStack.pop();
+            redoStack.push(aksi);
+            if (aksi.type === 'note') {
+                const ta = document.getElementById(aksi.id);
+                if (ta) {
+                    ta.value = aksi.before;
+                    dataKonten[aksi.id] = aksi.before;
+                    socket.emit('edit_kategori', { kategori: aksi.id, konten: aksi.before });
+                    if (pencarianAktif()) jalankanPencarian();
+                }
+            } else if (aksi.type === 'kategori') {
+                const kategori = dataKategori.find(k => k.id === aksi.id);
+                if (kategori) {
+                    kategori.nama = aksi.before.nama;
+                    kategori.ikon = aksi.before.ikon;
+                    const kartu = document.getElementById('card-' + aksi.id);
+                    if (kartu) {
+                        kartu.querySelector('.kategori-icon').textContent = aksi.before.ikon;
+                        kartu.querySelector('h3').textContent = aksi.before.nama;
+                    }
+                    const opsi = document.querySelector('#filterKategori option[value="' + aksi.id + '"]');
+                    if (opsi) opsi.textContent = aksi.before.ikon + ' ' + aksi.before.nama;
+                    socket.emit('edit_kategori_info', { id: aksi.id, nama: aksi.before.nama, ikon: aksi.before.ikon });
+                }
+            }
+            updateUndoRedoButtons();
+        }
+
+        function redoAksi() {
+            if (redoStack.length === 0) return;
+            const aksi = redoStack.pop();
+            undoStack.push(aksi);
+            if (aksi.type === 'note') {
+                const ta = document.getElementById(aksi.id);
+                if (ta) {
+                    ta.value = aksi.after;
+                    dataKonten[aksi.id] = aksi.after;
+                    socket.emit('edit_kategori', { kategori: aksi.id, konten: aksi.after });
+                    if (pencarianAktif()) jalankanPencarian();
+                }
+            } else if (aksi.type === 'kategori') {
+                const kategori = dataKategori.find(k => k.id === aksi.id);
+                if (kategori) {
+                    kategori.nama = aksi.after.nama;
+                    kategori.ikon = aksi.after.ikon;
+                    const kartu = document.getElementById('card-' + aksi.id);
+                    if (kartu) {
+                        kartu.querySelector('.kategori-icon').textContent = aksi.after.ikon;
+                        kartu.querySelector('h3').textContent = aksi.after.nama;
+                    }
+                    const opsi = document.querySelector('#filterKategori option[value="' + aksi.id + '"]');
+                    if (opsi) opsi.textContent = aksi.after.ikon + ' ' + aksi.after.nama;
+                    socket.emit('edit_kategori_info', { id: aksi.id, nama: aksi.after.nama, ikon: aksi.after.ikon });
+                }
+            }
+            updateUndoRedoButtons();
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                undoAksi();
+            }
+            if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+                e.preventDefault();
+                redoAksi();
+            }
+        });
+
+        document.getElementById('btnUndo').addEventListener('click', undoAksi);
+        document.getElementById('btnRedo').addEventListener('click', redoAksi);
+
         // ===== Escape teks bebas dari user sebelum dimasukkan lewat innerHTML =====
         function escapeHtml(teks) {
             const div = document.createElement('div');
@@ -694,12 +871,61 @@
             if (e.key === 'Enter') submitTambahKategori();
         });
 
+        const modalEditKategori = document.getElementById('modalEditKategori');
+        const inputEditNamaKategori = document.getElementById('inputEditNamaKategori');
+        const inputEditIkonKategori = document.getElementById('inputEditIkonKategori');
+        let kategoriSedangDiedit = null;
+
+        document.getElementById('btnBatalEdit').addEventListener('click', tutupModalEditKategori);
+        modalEditKategori.addEventListener('click', (e) => { if (e.target === modalEditKategori) tutupModalEditKategori(); });
+        document.getElementById('btnSimpanEdit').addEventListener('click', submitEditKategori);
+        inputEditNamaKategori.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') submitEditKategori();
+        });
+
         function submitTambahKategori() {
             const nama = document.getElementById('inputNamaKategori').value.trim();
             const ikon = document.getElementById('inputIkonKategori').value.trim() || '📁';
             if (!nama) return;
             socket.emit('tambah_kategori', { nama, ikon });
             tutupModalTambah();
+        }
+
+        function bukaModalEditKategori(id) {
+            const kategori = dataKategori.find(k => k.id === id);
+            if (!kategori) return;
+            kategoriSedangDiedit = id;
+            inputEditNamaKategori.value = kategori.nama;
+            inputEditIkonKategori.value = kategori.ikon;
+            modalEditKategori.classList.add('tampil');
+            inputEditNamaKategori.focus();
+        }
+
+        function tutupModalEditKategori() {
+            kategoriSedangDiedit = null;
+            modalEditKategori.classList.remove('tampil');
+            inputEditNamaKategori.value = '';
+            inputEditIkonKategori.value = '';
+        }
+
+        function submitEditKategori() {
+            if (!kategoriSedangDiedit) return;
+            const nama = inputEditNamaKategori.value.trim();
+            const ikon = inputEditIkonKategori.value.trim() || '📁';
+            if (!nama) return;
+            const kategori = dataKategori.find(k => k.id === kategoriSedangDiedit);
+            if (kategori && (kategori.nama !== nama || kategori.ikon !== ikon)) {
+                undoStack.push({
+                    type: 'kategori',
+                    id: kategoriSedangDiedit,
+                    before: { nama: kategori.nama, ikon: kategori.ikon },
+                    after: { nama, ikon },
+                });
+                redoStack.length = 0;
+                updateUndoRedoButtons();
+            }
+            socket.emit('edit_kategori_info', { id: kategoriSedangDiedit, nama, ikon });
+            tutupModalEditKategori();
         }
 
         socket.on('kategori_ditambahkan', function (kat) {
@@ -732,19 +958,33 @@
             titleWrap.appendChild(ikonSpan);
             titleWrap.appendChild(judul);
 
+            const kontrolWrap = document.createElement('div');
+            kontrolWrap.style.display = 'flex';
+            kontrolWrap.style.gap = '6px';
+
+            const btnEdit = document.createElement('button');
+            btnEdit.className = 'btn-edit-kategori';
+            btnEdit.title = 'Edit kategori';
+            btnEdit.textContent = '✏️';
+            btnEdit.onclick = () => bukaModalEditKategori(kat.id);
+
             const btnHapus = document.createElement('button');
             btnHapus.className = 'btn-hapus-kategori';
             btnHapus.title = 'Hapus kategori';
             btnHapus.textContent = '🗑️';
             btnHapus.onclick = () => hapusKategori(kat.id);
 
+            kontrolWrap.appendChild(btnEdit);
+            kontrolWrap.appendChild(btnHapus);
             header.appendChild(titleWrap);
-            header.appendChild(btnHapus);
+            header.appendChild(kontrolWrap);
 
             const textarea = document.createElement('textarea');
             textarea.id = kat.id;
             textarea.placeholder = 'Belum ada catatan...';
             textarea.value = '';
+            textarea.addEventListener('focus', () => mulaiEditCatatan(kat.id));
+            textarea.addEventListener('blur', () => selesaiEditCatatan(kat.id));
             textarea.addEventListener('keyup', () => kirimUpdate(kat.id));
 
             kartu.appendChild(header);
@@ -774,6 +1014,25 @@
             const opsi = document.querySelector('#filterKategori option[value="' + data.id + '"]');
             if (opsi) opsi.remove();
             if (pencarianAktif()) jalankanPencarian();
+        });
+
+        socket.on('kategori_diedit', function (data) {
+            const kategori = dataKategori.find(k => k.id === data.id);
+            if (kategori) {
+                kategori.nama = data.nama;
+                kategori.ikon = data.ikon;
+            }
+
+            const kartu = document.getElementById('card-' + data.id);
+            if (kartu) {
+                kartu.querySelector('.kategori-icon').textContent = data.ikon;
+                kartu.querySelector('h3').textContent = data.nama;
+            }
+
+            const opsi = document.querySelector('#filterKategori option[value="' + data.id + '"]');
+            if (opsi) {
+                opsi.textContent = data.ikon + ' ' + data.nama;
+            }
         });
 
         // ===== Pencarian & filter (kategori + inisial huruf + teks bebas) =====
